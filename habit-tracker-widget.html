@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notion Habit Tracker</title>
+    <style>
+        :root {
+            --primary: #37352f;
+            --background: #ffffff;
+            --accent: #007aff;
+            --border: #e0e0e0;
+            --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        body {
+            font-family: var(--font-family);
+            background-color: var(--background);
+            color: var(--primary);
+            margin: 0;
+            padding: 20px;
+            font-size: 16px;
+        }
+        #setup, #tracker, #loading, #error {
+            display: none; /* Hidden by default */
+        }
+        .container {
+            max-width: 500px;
+            margin: auto;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: var(--accent);
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        .habit-list {
+            list-style-type: none;
+            padding: 0;
+        }
+        .habit-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .habit-item:last-child {
+            border-bottom: none;
+        }
+        .habit-item input[type="checkbox"] {
+            margin-right: 15px;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        h2 {
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 10px;
+        }
+        .error-message {
+            color: #d93737;
+            background-color: #fce8e8;
+            padding: 15px;
+            border-radius: 4px;
+            border: 1px solid #d93737;
+        }
+        #reset-button {
+            background-color: #aaa;
+            font-size: 12px;
+            padding: 5px 10px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- ===== SETUP SCREEN ===== -->
+    <div id="setup">
+        <h2>🔗 Connect to Notion</h2>
+        <p>Please provide your Notion API key and the Database ID for your habit tracker.</p>
+        <div class="form-group">
+            <label for="apiKey">Notion API Key</label>
+            <input type="password" id="apiKey" placeholder="Starts with 'secret_...'">
+        </div>
+        <div class="form-group">
+            <label for="databaseId">Database ID</label>
+            <input type="text" id="databaseId" placeholder="The long string in your database URL">
+        </div>
+        <button onclick="saveConfig()">Connect</button>
+    </div>
+
+    <!-- ===== LOADING SPINNER ===== -->
+    <div id="loading">
+        <p>Loading habits from Notion...</p>
+    </div>
+
+    <!-- ===== ERROR MESSAGE ===== -->
+    <div id="error">
+        <h2>⚠️ Connection Error</h2>
+        <p class="error-message" id="error-text"></p>
+        <button onclick="resetConfig()">Reset Connection</button>
+    </div>
+
+    <!-- ===== MAIN TRACKER VIEW ===== -->
+    <div id="tracker">
+        <h2>✅ Today's Habits</h2>
+        <ul class="habit-list" id="habitList">
+            <!-- Habits will be loaded here by JavaScript -->
+        </ul>
+        <button id="reset-button" onclick="resetConfig()">Reset Connection</button>
+    </div>
+</div>
+
+<script>
+    const CONFIG_KEY = 'notionHabitTrackerConfig';
+
+    // Simplified CORS proxy
+    const CORS_PROXY = 'https://cors-anywhere.herokuapp.com/'; 
+    const NOTION_API_BASE = 'https://api.notion.com/v1/';
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const config = JSON.parse(localStorage.getItem(CONFIG_KEY));
+        if (config && config.apiKey && config.databaseId) {
+            initTracker(config);
+        } else {
+            document.getElementById('setup').style.display = 'block';
+        }
+    });
+
+    function saveConfig() {
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const databaseId = document.getElementById('databaseId').value.trim();
+
+        if (!apiKey || !databaseId) {
+            alert('Please provide both an API Key and a Database ID.');
+            return;
+        }
+
+        const config = { apiKey, databaseId };
+        localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+        
+        document.getElementById('setup').style.display = 'none';
+        initTracker(config);
+    }
+
+    function resetConfig() {
+        if (confirm('Are you sure you want to reset your Notion connection?')) {
+            localStorage.removeItem(CONFIG_KEY);
+            document.getElementById('tracker').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('setup').style.display = 'block';
+            document.getElementById('apiKey').value = '';
+            document.getElementById('databaseId').value = '';
+        }
+    }
+
+    async function initTracker(config) {
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('tracker').style.display = 'none';
+        document.getElementById('error').style.display = 'none';
+        
+        try {
+            const habits = await fetchHabits(config);
+            renderHabits(habits, config);
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('tracker').style.display = 'block';
+        } catch (err) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error-text').textContent = err.message;
+            document.getElementById('error').style.display = 'block';
+        }
+    }
+    
+    // Get today's date in YYYY-MM-DD format for Notion API
+    function getTodayDateString() {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    async function notionAPI(endpoint, method, config, body = null) {
+        const headers = {
+            'Authorization': `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json',
+            'Notion-Version': '2022-06-28'
+        };
+
+        const fetchOptions = {
+            method: method,
+            headers: headers,
+        };
+        
+        if (body) {
+            fetchOptions.body = JSON.stringify(body);
+        }
+
+        // Using a CORS proxy for client-side requests
+        const response = await fetch(`${CORS_PROXY}${NOTION_API_BASE}${endpoint}`, fetchOptions);
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Notion API Error: ${errorData.message}`);
+        }
+        return response.json();
+    }
+
+    async function fetchHabits(config) {
+        const today = getTodayDateString();
+        const endpoint = `databases/${config.databaseId}/query`;
+        const body = {
+            filter: {
+                property: 'Date',
+                date: {
+                    equals: today,
+                },
+            },
+        };
+        const data = await notionAPI(endpoint, 'POST', config, body);
+        return data.results;
+    }
+
+    function renderHabits(habits, config) {
+        const habitList = document.getElementById('habitList');
+        habitList.innerHTML = ''; // Clear previous list
+
+        if (habits.length === 0) {
+            habitList.innerHTML = '<li>No habits scheduled for today.</li>';
+            return;
+        }
+
+        habits.forEach(habit => {
+            const li = document.createElement('li');
+            li.className = 'habit-item';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `habit-${habit.id}`;
+            checkbox.checked = habit.properties.Completed.checkbox;
+            checkbox.dataset.pageId = habit.id;
+            
+            checkbox.addEventListener('change', (event) => {
+                updateHabitStatus(event.target.dataset.pageId, event.target.checked, config);
+            });
+
+            const label = document.createElement('label');
+            label.htmlFor = `habit-${habit.id}`;
+            // Handle cases where title property might be empty
+            label.textContent = habit.properties['Habit Name']?.title[0]?.plain_text || 'Untitled Habit';
+
+            li.appendChild(checkbox);
+            li.appendChild(label);
+            habitList.appendChild(li);
+        });
+    }
+
+    async function updateHabitStatus(pageId, isChecked, config) {
+        const endpoint = `pages/${pageId}`;
+        const body = {
+            properties: {
+                Completed: {
+                    checkbox: isChecked,
+                },
+            },
+        };
+        
+        try {
+            await notionAPI(endpoint, 'PATCH', config, body);
+            console.log(`Successfully updated habit ${pageId}`);
+        } catch (err) {
+            // Revert checkbox on failure
+            document.getElementById(`habit-${pageId}`).checked = !isChecked;
+            alert(`Failed to update habit: ${err.message}`);
+        }
+    }
+</script>
+
+</body>
+</html> 
